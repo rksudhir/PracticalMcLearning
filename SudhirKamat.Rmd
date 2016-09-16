@@ -1,0 +1,188 @@
+---
+title: "Practical Machine Learning Project"
+author: "Sudhir Kamat"
+date: "September 15, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list=ls())
+library(lattice)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(rpart)
+library(rattle)
+
+set.seed(716)
+
+getwd()
+setwd("C:/Users/sudhir.kamat/Documents/Coursera/0DataScience/08_Machine_Learning/Project")
+
+```
+
+## Practical Machine Learning: Final Project
+This is the submission towards the final class project for the Practical Machine Learning Course at Coursera. 
+
+### Overview:
+Using wearable technology devices (such as Fitbit, Jawbone Up, Nike FuelBand, MapMyFitness, etc.) we can collect data about a person's activities. Such data was experimentally collected from 6 participants who used accelerometers on the belt, forearm, arm, and dumbell. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har
+
+### Data Sources
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+### Project Goal
+The goal of this project is to predict the manner in which the persons in test-group performed the exercise, in the form of the Target Variable "classe". The following paragraphs describe data preparation, building of prediction model, its validation, assessment of expected error as well as the 20 predictions using the model built. 
+
+### Data Preparation
+
+#### Data Download 
+Data is directly loaded from the source URLs, as below. 
+
+```{r data-fetch}
+df1 <-  read.csv("pml-training.csv", sep = ",", na.strings = c("", "NA", "#DIV/0!"))
+dim(df1)
+
+df2 <-  read.csv("pml-testing.csv", sep = ",", na.strings = c("", "NA", "#DIV/0!"))
+dim(df2)
+```
+
+
+#### Data Partition & Cleaning
+The Training data is partitioned into training (60% rows) and test (40% rows) datasets, so that the prediction-model can be built using the training data, and it can be tested for accuracy using the test dataset. 
+
+During cleaning we remove the columns that contain too little variation within them, as these do not help us in prediction. We also handle the columns that have high covariance with each other, retaining only those that improve the prediction efficiency. Finally, we remove the columns that have too many missing values (over 70%).
+
+
+```{r part-cleaning}
+partTrain <- createDataPartition(df1$classe, p=0.6, list=FALSE)
+dtTrain <- df1[partTrain, ]
+dtTest <- df1[-partTrain, ]
+dim(dtTrain)
+dim(dtTest)
+rm(df1)
+
+## Clean the dataset 
+dtTrain <- dtTrain[, colSums(is.na(dtTrain)) != nrow(dtTrain)]
+## remove nearZeroVariation columns 
+nzv <- nearZeroVar(dtTrain, saveMetrics=TRUE)
+dtTrain <- dtTrain[,nzv$nzv==FALSE]
+
+## Remove the first column from the dataset
+dtTrain <- dtTrain[c(-1)]
+
+## Remove features having high correlation
+  outCol <- which(names(dtTrain) == "classe")
+  dtTrainNums <- sapply(dtTrain, is.numeric)
+  hiCorrelationCols <- findCorrelation(abs(cor(dtTrain[ , dtTrainNums][,-outCol], use="pairwise.complete.obs")),0.90, verbose=FALSE)
+  highCorrFeatures = names(dtTrain)[hiCorrelationCols]
+## highCorrFeatures
+  dtTrain <- dtTrain[, -hiCorrelationCols]
+## str(dtTrain)  ## 11776 obs. of  96 variables remain
+
+## Remove columns having too many NAs.
+dtTrain <- dtTrain[, colSums(is.na(dtTrain)) != nrow(dtTrain)]
+tmpDf <- dtTrain
+for(i in 1:length(dtTrain)) {
+  if( sum( is.na( dtTrain[, i] ) ) /nrow(dtTrain) >= .7) {
+    for(j in 1:length(tmpDf)) {
+      if( length( grep(names(dtTrain[i]), names(tmpDf)[j]) ) == 1)  {
+        tmpDf <- tmpDf[ , -j]
+      }   
+    } 
+  }
+}
+dtTrain <- tmpDf
+rm(tmpDf)
+## str(dtTrain)  ## 11776 obs. of  51 variables remain
+```
+
+### Prediction Model 
+Having cleaned the data, we now build separate prediction models and test them on our test dataset.
+
+#### Building Random Forest Model
+At first we use the most versatile machine learning method of Random Forest. We also plot the importance of various Variables in our data in prediction.
+
+```{r RandomForest}
+outCol <- which(names(dtTrain) == "classe")
+dRF = randomForest(dtTrain[,-outCol], dtTrain[,outCol], importance = T)
+## Plotting the importance of variables:
+varImpPlot(dRF)
+```
+Using the variables selected as important, we plot a scatter plot.
+
+```{r ScatterPlot}
+rfImp = data.frame(dRF$importance)
+impFeatures = order(-rfImp$MeanDecreaseGini)
+inImp = createDataPartition(dtTrain$classe, p = 0.05, list = F)
+## Plot the features in a Scatter-plot
+featurePlot(dtTrain[inImp,impFeatures[1:4]],dtTrain$classe[inImp], plot = "pairs")
+```
+
+#### Building Fitted Decision Tree Model
+Subsequently, we use the fitted model object of class "rpart" of R to prepare a decision tree with our training data, and plot the tree to view the result.
+
+```{r rpart}
+modFitA1 <- rpart(classe ~ ., data=dtTrain, method="class")
+## Plot the tree to view it.
+fancyRpartPlot(modFitA1)
+```
+
+### Testing the Model
+Now that we have built two separate prediction models, we try them each on our test dataset, which we had separated from original training data. 
+#### Clean Test Data
+To do this, we need to first select only those columns from test dataset that we had used to build the models.
+
+```{r CleanTestData}
+dtTest <- dtTest[,colnames(dtTrain)]
+dim(dtTest)
+dim(dtTrain)
+```
+#### Testing the Random Forest Model
+```{r TestRandomForest}
+PredictionRFM <- predict(dRF, dtTest, type = "class")
+confusionMatrix(PredictionRFM, dtTest$classe)
+```
+#### Testing the Fitted Decision Tree Model
+```{r TestRPart}
+predictionFitA1 <- predict(modFitA1, dtTest, type = "class")
+confusionMatrix(predictionFitA1, dtTest$classe)
+```
+
+### Model Selection & Prediction
+We notice that the model built using Random Forest is giving us better accuracy than the one with Fitted Decision Tree. Therefore, we use that model to predict the target variables using the test dataset. 
+
+```{r Prediction}
+## Trim the test dataset by removing unwanted columns
+dNames <- colnames(dtTest)
+length(dNames) <-  length(dNames)-1
+df2 <- df2[,dNames]
+dim(df2)
+
+## Coerce the column data types to match that of the training data types 
+for (i in 1:length(df2) ) {
+  for(j in 1:length(dtTest)) {
+    if( length( grep(names(dtTest[i]), names(df2)[j]) ) ==1)  {
+      class(df2[j]) <- class(dtTest[i])
+    }      
+  }      
+}
+
+## Confirm the data types are matching by adding a row and deleting it.
+ df2 <- rbind(dtTest[2, -ncol(dtTest)] , df2) 
+ df2 <- df2[-1,]
+
+## Use the Predict function with Random Forest Model
+ predictionFinal <- predict(dRF, df2)
+ predictionFinal
+
+```
+
+
